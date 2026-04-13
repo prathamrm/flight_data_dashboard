@@ -30,3 +30,18 @@ plt.xticks(rotation=45)
 
 plt.tight_layout()
 plt.show()
+
+# Calculate average departure delay by airline
+delay_by_airline = flights.groupby("AIRLINE_y")["DEPARTURE_DELAY"].mean().sort_values(ascending=False).head(10)
+
+# Plot
+plt.figure(figsize=(12, 6))
+delay_by_airline.plot(kind="bar")
+
+plt.title("Top 10 Airlines by Average Departure Delay")
+plt.xlabel("Airline")
+plt.ylabel("Average Delay (minutes)")
+plt.xticks(rotation=45)
+
+plt.tight_layout()
+plt.show()
