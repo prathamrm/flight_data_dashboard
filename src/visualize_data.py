@@ -1,21 +1,30 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Load data
+# Load datasets
 flights = pd.read_csv("data/flights.csv", low_memory=False)
+airlines = pd.read_csv("data/airlines.csv")
 
-# Sample to keep it fast
+# Sample
 flights = flights.sample(n=100000, random_state=42)
 
-# Get top airlines
-top_airlines = flights["AIRLINE"].value_counts().head(10)
+# Merge flights with airline names
+flights = flights.merge(
+    airlines,
+    left_on="AIRLINE",
+    right_on="IATA_CODE",
+    how="left"
+)
+
+# Now use full airline names
+top_airlines = flights["AIRLINE_y"].value_counts().head(10)
 
 # Plot
-plt.figure(figsize=(10, 6))
+plt.figure(figsize=(12, 6))
 top_airlines.plot(kind="bar")
 
 plt.title("Top 10 Airlines by Number of Flights")
-plt.xlabel("Airline Code")
+plt.xlabel("Airline")
 plt.ylabel("Number of Flights")
 plt.xticks(rotation=45)
 
