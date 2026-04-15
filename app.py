@@ -1,3 +1,5 @@
+import joblib
+import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -5,14 +7,33 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Flight Delay Dashboard", layout="wide")
 
 st.title("✈️ Flight Delay Analysis Dashboard")
+st.caption("Interactive dashboard for exploring airline delays, airport patterns, and predicting departure delay.")
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """Calculate great-circle distance in miles using the Haversine formula."""
+    R = 3958.8  # Earth radius in miles
+
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    c = 2 * np.arcsin(np.sqrt(a))
+
+    return R * c
+
 
 @st.cache_data
 def load_data():
     flights = pd.read_csv("data/flights.csv", low_memory=False)
     airlines = pd.read_csv("data/airlines.csv")
+    airports = pd.read_csv("data/airports.csv")
 
+    # Keep app responsive
     flights = flights.sample(n=100000, random_state=42)
 
+    # Merge airline names
     flights = flights.merge(
         airlines,
         left_on="AIRLINE",
@@ -20,12 +41,61 @@ def load_data():
         how="left"
     )
 
-    flights = flights.rename(columns={"AIRLINE_y": "AIRLINE_NAME"})
+    flights = flights.rename(columns={
+        "AIRLINE_x": "AIRLINE_CODE",
+        "AIRLINE_y": "AIRLINE_NAME"
+    })
+
+    # Merge readable origin airport names + coordinates
+    origin_airports = airports[["IATA_CODE", "AIRPORT", "LATITUDE", "LONGITUDE"]].rename(columns={
+        "IATA_CODE": "ORIGIN_AIRPORT",
+        "AIRPORT": "ORIGIN_AIRPORT_NAME",
+        "LATITUDE": "ORIGIN_LAT",
+        "LONGITUDE": "ORIGIN_LON"
+    })
+
+    flights = flights.merge(
+        origin_airports,
+        on="ORIGIN_AIRPORT",
+        how="left"
+    )
+
+    # Merge readable destination airport names + coordinates
+    destination_airports = airports[["IATA_CODE", "AIRPORT", "LATITUDE", "LONGITUDE"]].rename(columns={
+        "IATA_CODE": "DESTINATION_AIRPORT",
+        "AIRPORT": "DESTINATION_AIRPORT_NAME",
+        "LATITUDE": "DEST_LAT",
+        "LONGITUDE": "DEST_LON"
+    })
+
+    flights = flights.merge(
+        destination_airports,
+        on="DESTINATION_AIRPORT",
+        how="left"
+    )
+
+    # Friendly labels for UI dropdowns
+    flights["ORIGIN_LABEL"] = (
+        flights["ORIGIN_AIRPORT"].astype(str) + " — " +
+        flights["ORIGIN_AIRPORT_NAME"].fillna("Unknown Airport")
+    )
+
+    flights["DESTINATION_LABEL"] = (
+        flights["DESTINATION_AIRPORT"].astype(str) + " — " +
+        flights["DESTINATION_AIRPORT_NAME"].fillna("Unknown Airport")
+    )
 
     return flights
 
-# Load data once
+
+@st.cache_resource
+def load_model():
+    return joblib.load("models/delay_predictor.joblib")
+
+
+# Load once
 flights = load_data()
+model = load_model()
 
 # -------------------------------
 # Sidebar filters
@@ -44,7 +114,6 @@ selected_month = st.sidebar.selectbox(
     month_options
 )
 
-# Apply filters
 dashboard_flights = flights.copy()
 
 if selected_airline_filter != "All":
@@ -110,16 +179,13 @@ filtered_airports = dashboard_flights[
     dashboard_flights["ORIGIN_AIRPORT"].isin(valid_airports)
 ]
 
-# Fall back if the strict airport threshold removes everything
 if filtered_airports.empty:
     airport_source = dashboard_flights.copy()
 else:
     airport_source = filtered_airports.copy()
 
-# Remove rows where delay is missing
 airport_source = airport_source.dropna(subset=["DEPARTURE_DELAY"])
 
-# Build grouped result only if data remains
 if airport_source.empty:
     airport_delay = pd.Series(dtype=float)
 else:
@@ -162,7 +228,7 @@ with col_right:
         ax2.set_ylabel("Average Delay (minutes)")
         plt.xticks(rotation=45)
         st.pyplot(fig2)
-        
+
 # -------------------------------
 # Monthly delay trend
 # -------------------------------
@@ -247,3 +313,102 @@ if explorer_airline_list:
         st.pyplot(fig5)
 else:
     st.warning("No airline data available for the selected filters.")
+
+# -------------------------------
+# Flight Delay Prediction Tool
+# -------------------------------
+st.markdown("---")
+st.subheader("✈️ Predict Flight Delay")
+st.write("Enter flight details to estimate departure delay.")
+
+month_input = st.selectbox("Month", list(range(1, 13)), key="pred_month")
+day_input = st.selectbox("Day of Week", list(range(1, 8)), key="pred_day")
+
+airline_input = st.selectbox(
+    "Airline",
+    sorted(flights["AIRLINE_NAME"].dropna().unique()),
+    key="pred_airline"
+)
+
+# Only show airports with known readable names
+known_origin_labels = sorted(
+    flights.loc[
+        flights["ORIGIN_AIRPORT_NAME"].notna(),
+        "ORIGIN_LABEL"
+    ].dropna().unique()
+)
+
+known_dest_labels = sorted(
+    flights.loc[
+        flights["DESTINATION_AIRPORT_NAME"].notna(),
+        "DESTINATION_LABEL"
+    ].dropna().unique()
+)
+
+origin_label = st.selectbox(
+    "Origin Airport",
+    known_origin_labels,
+    key="pred_origin"
+)
+
+dest_label = st.selectbox(
+    "Destination Airport",
+    known_dest_labels,
+    key="pred_dest"
+)
+
+# Build code maps for model input
+airline_code_map = (
+    flights[["AIRLINE_NAME", "AIRLINE_CODE"]]
+    .dropna()
+    .drop_duplicates()
+    .set_index("AIRLINE_NAME")["AIRLINE_CODE"]
+    .to_dict()
+)
+
+origin_code_map = (
+    flights[["ORIGIN_LABEL", "ORIGIN_AIRPORT", "ORIGIN_LAT", "ORIGIN_LON"]]
+    .dropna()
+    .drop_duplicates()
+    .set_index("ORIGIN_LABEL")
+)
+
+dest_code_map = (
+    flights[["DESTINATION_LABEL", "DESTINATION_AIRPORT", "DEST_LAT", "DEST_LON"]]
+    .dropna()
+    .drop_duplicates()
+    .set_index("DESTINATION_LABEL")
+)
+
+airline_code_input = airline_code_map[airline_input]
+
+origin_row = origin_code_map.loc[origin_label]
+dest_row = dest_code_map.loc[dest_label]
+
+origin_input = origin_row["ORIGIN_AIRPORT"]
+dest_input = dest_row["DESTINATION_AIRPORT"]
+
+distance_input = calculate_distance(
+    origin_row["ORIGIN_LAT"],
+    origin_row["ORIGIN_LON"],
+    dest_row["DEST_LAT"],
+    dest_row["DEST_LON"]
+)
+
+st.write(f"Estimated Distance: {distance_input:.0f} miles")
+
+if st.button("Predict Delay"):
+    input_df = pd.DataFrame([{
+        "MONTH": month_input,
+        "DAY_OF_WEEK": day_input,
+        "AIRLINE": airline_code_input,
+        "ORIGIN_AIRPORT": origin_input,
+        "DESTINATION_AIRPORT": dest_input,
+        "DISTANCE": distance_input
+    }])
+
+    prediction = model.predict(input_df)[0]
+    st.success(f"Predicted Departure Delay: {prediction:.2f} minutes")
+
+st.markdown("---")
+st.markdown("Built by Pratham | Flight Delay Analysis & Prediction Dashboard ✈️")
