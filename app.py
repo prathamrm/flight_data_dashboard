@@ -71,8 +71,8 @@ col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Total Flights", f"{total_flights:,}")
 col2.metric("Airlines", num_airlines)
-col3.metric("Avg Departure Delay", f"{avg_delay:.2f} min")
-col4.metric("Median Departure Delay", f"{median_delay:.2f} min")
+col3.metric("Avg Departure Delay", f"{avg_delay:.2f} min" if pd.notna(avg_delay) else "N/A")
+col4.metric("Median Departure Delay", f"{median_delay:.2f} min" if pd.notna(median_delay) else "N/A")
 
 # -------------------------------
 # Key insights
@@ -110,12 +110,25 @@ filtered_airports = dashboard_flights[
     dashboard_flights["ORIGIN_AIRPORT"].isin(valid_airports)
 ]
 
-airport_delay = (
-    filtered_airports.groupby("ORIGIN_AIRPORT")["DEPARTURE_DELAY"]
-    .mean()
-    .sort_values(ascending=False)
-    .head(10)
-)
+# Fall back if the strict airport threshold removes everything
+if filtered_airports.empty:
+    airport_source = dashboard_flights.copy()
+else:
+    airport_source = filtered_airports.copy()
+
+# Remove rows where delay is missing
+airport_source = airport_source.dropna(subset=["DEPARTURE_DELAY"])
+
+# Build grouped result only if data remains
+if airport_source.empty:
+    airport_delay = pd.Series(dtype=float)
+else:
+    airport_delay = (
+        airport_source.groupby("ORIGIN_AIRPORT")["DEPARTURE_DELAY"]
+        .mean()
+        .sort_values(ascending=False)
+        .head(10)
+    )
 
 # -------------------------------
 # Side-by-side charts
@@ -125,50 +138,62 @@ col_left, col_right = st.columns(2)
 with col_left:
     st.subheader("Average Delay by Airline (Filtered)")
 
-    fig1, ax1 = plt.subplots(figsize=(8, 4))
-    delay_by_airline.plot(kind="bar", ax=ax1)
-    ax1.set_title("Average Delay by Airline (Filtered)")
-    ax1.set_xlabel("Airline")
-    ax1.set_ylabel("Delay (minutes)")
-    plt.xticks(rotation=45)
-    st.pyplot(fig1)
+    if delay_by_airline.empty:
+        st.info("No airline delay data available for the selected filters.")
+    else:
+        fig1, ax1 = plt.subplots(figsize=(8, 4))
+        delay_by_airline.plot(kind="bar", ax=ax1)
+        ax1.set_title("Average Delay by Airline (Filtered)")
+        ax1.set_xlabel("Airline")
+        ax1.set_ylabel("Delay (minutes)")
+        plt.xticks(rotation=45)
+        st.pyplot(fig1)
 
 with col_right:
     st.subheader("Top 10 Most Delayed Origin Airports")
 
-    fig2, ax2 = plt.subplots(figsize=(8, 4))
-    airport_delay.plot(kind="bar", ax=ax2)
-    ax2.set_title("Top 10 Most Delayed Origin Airports")
-    ax2.set_xlabel("Airport")
-    ax2.set_ylabel("Average Delay (minutes)")
-    plt.xticks(rotation=45)
-    st.pyplot(fig2)
-
+    if airport_delay.empty:
+        st.info("No airport delay data available for the selected filters.")
+    else:
+        fig2, ax2 = plt.subplots(figsize=(8, 4))
+        airport_delay.plot(kind="bar", ax=ax2)
+        ax2.set_title("Top 10 Most Delayed Origin Airports")
+        ax2.set_xlabel("Airport")
+        ax2.set_ylabel("Average Delay (minutes)")
+        plt.xticks(rotation=45)
+        st.pyplot(fig2)
+        
 # -------------------------------
 # Monthly delay trend
 # -------------------------------
 st.subheader("Average Departure Delay by Month")
 
-monthly_delay = (
-    dashboard_flights.groupby("MONTH")["DEPARTURE_DELAY"]
-    .mean()
-    .sort_index()
-)
+if selected_month != "All":
+    st.info("Monthly trend is most useful when viewing all months.")
+else:
+    monthly_delay = (
+        dashboard_flights.groupby("MONTH")["DEPARTURE_DELAY"]
+        .mean()
+        .sort_index()
+    )
 
-month_names = {
-    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
-    5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
-    9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
-}
+    month_names = {
+        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
+        5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
+        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+    }
 
-monthly_delay.index = monthly_delay.index.map(month_names)
+    if monthly_delay.empty:
+        st.info("No monthly delay data available for the selected filters.")
+    else:
+        monthly_delay.index = monthly_delay.index.map(month_names)
 
-fig3, ax3 = plt.subplots(figsize=(8, 4))
-monthly_delay.plot(kind="line", marker="o", ax=ax3)
-ax3.set_title("Average Departure Delay by Month")
-ax3.set_xlabel("Month")
-ax3.set_ylabel("Average Delay (minutes)")
-st.pyplot(fig3)
+        fig3, ax3 = plt.subplots(figsize=(8, 4))
+        monthly_delay.plot(kind="line", marker="o", ax=ax3)
+        ax3.set_title("Average Departure Delay by Month")
+        ax3.set_xlabel("Month")
+        ax3.set_ylabel("Average Delay (minutes)")
+        st.pyplot(fig3)
 
 # -------------------------------
 # Top origin airports
@@ -177,13 +202,16 @@ st.subheader("Top 10 Origin Airports")
 
 top_origins = dashboard_flights["ORIGIN_AIRPORT"].value_counts().head(10)
 
-fig4, ax4 = plt.subplots(figsize=(8, 4))
-top_origins.plot(kind="bar", ax=ax4)
-ax4.set_title("Top 10 Origin Airports")
-ax4.set_xlabel("Airport")
-ax4.set_ylabel("Number of Flights")
-plt.xticks(rotation=45)
-st.pyplot(fig4)
+if top_origins.empty:
+    st.info("No origin airport data available for the selected filters.")
+else:
+    fig4, ax4 = plt.subplots(figsize=(8, 4))
+    top_origins.plot(kind="bar", ax=ax4)
+    ax4.set_title("Top 10 Origin Airports")
+    ax4.set_xlabel("Airport")
+    ax4.set_ylabel("Number of Flights")
+    plt.xticks(rotation=45)
+    st.pyplot(fig4)
 
 # -------------------------------
 # Interactive airline explorer
@@ -202,15 +230,20 @@ if explorer_airline_list:
         dashboard_flights["AIRLINE_NAME"] == selected_airline
     ]
 
-    fig5, ax5 = plt.subplots(figsize=(8, 4))
-    airline_data["DEPARTURE_DELAY"].dropna().plot(
-        kind="hist",
-        bins=50,
-        ax=ax5
-    )
-    ax5.set_title(f"Delay Distribution for {selected_airline}")
-    ax5.set_xlabel("Delay (minutes)")
-    ax5.set_ylabel("Number of Flights")
-    st.pyplot(fig5)
+    departure_delays = airline_data["DEPARTURE_DELAY"].dropna()
+
+    if departure_delays.empty:
+        st.info("No delay distribution data available for this airline and filter combination.")
+    else:
+        fig5, ax5 = plt.subplots(figsize=(8, 4))
+        departure_delays.plot(
+            kind="hist",
+            bins=50,
+            ax=ax5
+        )
+        ax5.set_title(f"Delay Distribution for {selected_airline}")
+        ax5.set_xlabel("Delay (minutes)")
+        ax5.set_ylabel("Number of Flights")
+        st.pyplot(fig5)
 else:
     st.warning("No airline data available for the selected filters.")
